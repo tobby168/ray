@@ -24,6 +24,10 @@ class TestImageTag(unittest.TestCase):
         got = image_tag("ecr.example.com/repo", "abc123", "3.12")
         self.assertEqual(got, "ecr.example.com/repo:abc123-ray-core-py3.12")
 
+    def test_with_arch_suffix(self):
+        got = image_tag("ecr.example.com/repo", "abc123", "3.12", "-aarch64")
+        self.assertEqual(got, "ecr.example.com/repo:abc123-ray-core-py3.12-aarch64")
+
     def test_different_version(self):
         got = image_tag("registry/citemp", "build42", "3.14")
         self.assertEqual(got, "registry/citemp:build42-ray-core-py3.14")

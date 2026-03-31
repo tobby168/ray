@@ -86,13 +86,18 @@ def upload_paths(paths, resp, destination, key=None):
         if key is not None:
             of["key"] = key
         else:
-            of["key"] = {
+            key_map = {
                 "wheels": f"latest/{fn}",
                 "branch_wheels": f"{branch}/{sha}/{fn}",
                 "jars": f"jars/latest/{current_os}/{fn}",
                 "branch_jars": f"jars/{branch}/{sha}/{current_os}/{fn}",
                 "logs": f"bazel_events/{branch}/{sha}/{bk_job_id}/{fn}",
-            }[destination]
+            }
+            if destination not in key_map:
+                raise ValueError(
+                    f"Destination {destination!r} requires --key to be specified"
+                )
+            of["key"] = key_map[destination]
         of["file"] = open(path, "rb")
         r = requests.post(c["url"], files=of)
         print(f"Uploaded {path} to {of['key']}", r.status_code)

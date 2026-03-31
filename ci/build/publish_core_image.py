@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -27,9 +28,11 @@ def s3_key(platform: str, arch: str, python_version: str, digest: str) -> str:
     return f"core-digest/{platform}/{arch}/{python_version}/{digest}"
 
 
-def image_tag(work_repo: str, build_id: str, python_version: str) -> str:
+def image_tag(
+    work_repo: str, build_id: str, python_version: str, arch_suffix: str = ""
+) -> str:
     """Construct the wanda work tag for the ray-core image."""
-    return f"{work_repo}:{build_id}-ray-core-py{python_version}"
+    return f"{work_repo}:{build_id}-ray-core-py{python_version}{arch_suffix}"
 
 
 def _require_env(name: str) -> str:
@@ -53,7 +56,7 @@ def compute_digest(ray_root: str) -> str:
         ENV_FILE,
         WANDA_SPEC,
     ]
-    log.info(f"Computing digest: {' '.join(cmd)}")
+    log.info(f"Computing digest: {shlex.join(cmd)}")
     result = subprocess.run(
         cmd,
         cwd=ray_root,
@@ -73,7 +76,7 @@ def compute_digest(ray_root: str) -> str:
 def export_image(tag: str, output_path: str) -> None:
     """Export a Docker image to a tar file using crane."""
     cmd = ["crane", "export", tag, output_path]
-    log.info(f"Exporting image: {' '.join(cmd)}")
+    log.info(f"Exporting image: {shlex.join(cmd)}")
     result = subprocess.run(cmd)
     if result.returncode != 0:
         raise BuildError(f"crane export failed (rc={result.returncode})")
@@ -93,7 +96,7 @@ def upload_to_s3(ray_root: str, key: str, path: str) -> None:
         "--path",
         path,
     ]
-    log.info(f"Uploading: {' '.join(cmd)}")
+    log.info(f"Uploading: {shlex.join(cmd)}")
     result = subprocess.run(cmd, cwd=ray_root)
     if result.returncode != 0:
         raise BuildError(f"upload failed (rc={result.returncode})")
@@ -104,12 +107,14 @@ def publish(dry_run: bool = False) -> None:
     root = str(find_ray_root())
 
     python_version = _require_env("PYTHON_VERSION")
+    arch_suffix = os.environ.get("ARCH_SUFFIX", "")
+    hosttype = _require_env("HOSTTYPE")
     work_repo = _require_env("RAYCI_WORK_REPO")
     build_id = _require_env("RAYCI_BUILD_ID")
 
     digest = compute_digest(root)
-    tag = image_tag(work_repo, build_id, python_version)
-    key = s3_key("linux", "x86_64", python_version, digest)
+    tag = image_tag(work_repo, build_id, python_version, arch_suffix)
+    key = s3_key("linux", hosttype, python_version, digest)
 
     log.info(f"Digest: {digest}")
     log.info(f"Image tag: {tag}")
