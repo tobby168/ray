@@ -33,14 +33,17 @@ namespace experimental {
 
 namespace {
 
+// POSIX requires semaphore names to start with '/'. Linux with strict glibc
+// (e.g., <= 2.31) returns EINVAL from sem_open() without it; macOS is lenient.
+
 std::string GetSemaphoreObjectName(const std::string &name) {
-  std::string ret = absl::StrCat("obj", name);
+  std::string ret = absl::StrCat("/obj", name);
   RAY_CHECK_LE(name.size(), PSEMNAMLEN);
   return ret;
 }
 
 std::string GetSemaphoreHeaderName(const std::string &name) {
-  std::string ret = absl::StrCat("hdr", name);
+  std::string ret = absl::StrCat("/hdr", name);
   RAY_CHECK_LE(name.size(), PSEMNAMLEN);
   return ret;
 }
@@ -171,8 +174,21 @@ void MutableObjectManager::OpenSemaphores(const ObjectID &object_id,
            PlasmaObjectHeader::SemaphoresCreationLevel::kDone) {
       sched_yield();
     }
-    semaphores.object_sem = sem_open(GetSemaphoreObjectName(name).c_str(), /*oflag=*/0);
-    semaphores.header_sem = sem_open(GetSemaphoreHeaderName(name).c_str(), /*oflag=*/0);
+    // Use O_CREAT without O_EXCL so that this works for both the intra-node and
+    // cross-node cases:
+    // - Intra-node: the semaphores already exist (created by the writer on this machine),
+    //   so sem_open opens them and ignores the initial value.
+    // - Cross-node: the writer set semaphores_created=kDone in shared memory that is
+    //   visible here, but the named semaphores were never created on this machine.
+    //   O_CREAT creates them locally with the correct initial value of 1.
+    semaphores.object_sem = sem_open(GetSemaphoreObjectName(name).c_str(),
+                                     /*oflag=*/O_CREAT,
+                                     /*mode=*/0644,
+                                     /*value=*/1);
+    semaphores.header_sem = sem_open(GetSemaphoreHeaderName(name).c_str(),
+                                     /*oflag=*/O_CREAT,
+                                     /*mode=*/0644,
+                                     /*value=*/1);
   }
   RAY_CHECK_NE(semaphores.object_sem, SEM_FAILED);
   RAY_CHECK_NE(semaphores.header_sem, SEM_FAILED);
