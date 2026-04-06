@@ -340,69 +340,209 @@ export const useJobProgressByLineage = (
   };
 };
 
+// --- Mock DAG scenarios ---
+// Navigate to different job IDs to see different DAG patterns:
+//   #/jobs/data-pipeline   → Big Data Processing (ETL)
+//   #/jobs/training        → Model Training (Ray Train + Data)
+//   #/jobs/serving         → Model Serving (Ray Serve deployment graph)
+//   #/jobs/eval            → Evaluation Pipeline
+//   #/jobs/<anything-else> → Default training pipeline
+
+const n = (
+  name: string,
+  state_counts: { [k: string]: number },
+): NestedJobProgress => ({
+  name,
+  key: name,
+  type: "NORMAL_TASK" as any,
+  state_counts,
+  children: [],
+});
+
+const MOCK_SCENARIOS: Record<string, DAGSummary> = {
+  // --- Big Data Processing (ETL) ---
+  "data-pipeline": {
+    nodes: [
+      n("ReadCSV", { FINISHED: 120000 }),
+      n("FilterInvalid", { FINISHED: 120000 }),
+      n("ParseJSON", { FINISHED: 115000, RUNNING: 200, PENDING_NODE_ASSIGNMENT: 4800 }),
+      n("FetchUserProfile", { FINISHED: 80000, RUNNING: 500, PENDING_ARGS_AVAIL: 39500 }),
+      n("FetchGeoData", { FINISHED: 95000, RUNNING: 300, PENDING_ARGS_AVAIL: 24700 }),
+      n("JoinFeatures", { FINISHED: 60000, RUNNING: 150, PENDING_ARGS_AVAIL: 59850 }),
+      n("Deduplicate", { FINISHED: 40000, PENDING_ARGS_AVAIL: 80000 }),
+      n("WriteParquet", { FINISHED: 25000, PENDING_ARGS_AVAIL: 95000 }),
+    ],
+    actors: [],
+    edges: [
+      { source: "ReadCSV", target: "FilterInvalid" },
+      { source: "FilterInvalid", target: "ParseJSON" },
+      { source: "ParseJSON", target: "FetchUserProfile" },
+      { source: "ParseJSON", target: "FetchGeoData" },
+      { source: "FetchUserProfile", target: "JoinFeatures" },
+      { source: "FetchGeoData", target: "JoinFeatures" },
+      { source: "JoinFeatures", target: "Deduplicate" },
+      { source: "Deduplicate", target: "WriteParquet" },
+    ],
+  },
+
+  // --- Model Training (Ray Train + Data) ---
+  training: {
+    nodes: [
+      n("ReadParquet", { FINISHED: 50000 }),
+      n("Tokenize", { FINISHED: 48000, RUNNING: 120, PENDING_ARGS_AVAIL: 1880 }),
+      n("Augment", { FINISHED: 45000, RUNNING: 200, PENDING_ARGS_AVAIL: 4800 }),
+      n("ShuffleAndBatch", { FINISHED: 40000, RUNNING: 80, PENDING_ARGS_AVAIL: 9920 }),
+      n("LoadCheckpoint", { FINISHED: 1 }),
+      n("TrainStep", { FINISHED: 8500, RUNNING: 64, FAILED: 3, PENDING_ARGS_AVAIL: 1433 }),
+      n("ValidateEpoch", { FINISHED: 17, RUNNING: 1, PENDING_ARGS_AVAIL: 2 }),
+      n("SaveCheckpoint", { FINISHED: 17, PENDING_ARGS_AVAIL: 3 }),
+    ],
+    actors: [
+      {
+        name: "TorchTrainer",
+        key: "actor:TorchTrainer",
+        type: "ACTOR" as any,
+        state_counts: { ALIVE: 8 },
+        children: [],
+      },
+      {
+        name: "DataWorker",
+        key: "actor:DataWorker",
+        type: "ACTOR" as any,
+        state_counts: { ALIVE: 4 },
+        children: [],
+      },
+    ],
+    edges: [
+      { source: "ReadParquet", target: "Tokenize" },
+      { source: "Tokenize", target: "Augment" },
+      { source: "Augment", target: "ShuffleAndBatch" },
+      { source: "ShuffleAndBatch", target: "TrainStep" },
+      { source: "LoadCheckpoint", target: "TrainStep" },
+      { source: "TrainStep", target: "ValidateEpoch" },
+      { source: "ValidateEpoch", target: "SaveCheckpoint" },
+    ],
+  },
+
+  // --- Model Serving (Ray Serve deployment graph) ---
+  serving: {
+    nodes: [
+      n("HTTPIngress", { FINISHED: 285000, RUNNING: 120 }),
+      n("Preprocess", { FINISHED: 284500, RUNNING: 95, PENDING_ARGS_AVAIL: 25 }),
+      n("Tokenizer", { FINISHED: 284000, RUNNING: 80, PENDING_ARGS_AVAIL: 40 }),
+      n("EmbeddingModel", { FINISHED: 280000, RUNNING: 60, PENDING_NODE_ASSIGNMENT: 500, PENDING_ARGS_AVAIL: 3560 }),
+      n("RetrievalIndex", { FINISHED: 280000, RUNNING: 40, PENDING_ARGS_AVAIL: 4080 }),
+      n("LLMGenerate", { FINISHED: 260000, RUNNING: 48, FAILED: 150, PENDING_ARGS_AVAIL: 23922 }),
+      n("Guardrails", { FINISHED: 259000, RUNNING: 30, PENDING_ARGS_AVAIL: 25090 }),
+      n("ResponseFormatter", { FINISHED: 258000, RUNNING: 25, PENDING_ARGS_AVAIL: 26095 }),
+    ],
+    actors: [
+      {
+        name: "LLMReplica",
+        key: "actor:LLMReplica",
+        type: "ACTOR" as any,
+        state_counts: { ALIVE: 16 },
+        children: [],
+      },
+      {
+        name: "EmbeddingReplica",
+        key: "actor:EmbeddingReplica",
+        type: "ACTOR" as any,
+        state_counts: { ALIVE: 4 },
+        children: [],
+      },
+    ],
+    edges: [
+      { source: "HTTPIngress", target: "Preprocess" },
+      { source: "Preprocess", target: "Tokenizer" },
+      { source: "Tokenizer", target: "EmbeddingModel" },
+      { source: "Tokenizer", target: "LLMGenerate" },
+      { source: "EmbeddingModel", target: "RetrievalIndex" },
+      { source: "RetrievalIndex", target: "LLMGenerate" },
+      { source: "LLMGenerate", target: "Guardrails" },
+      { source: "Guardrails", target: "ResponseFormatter" },
+    ],
+  },
+
+  // --- Evaluation Pipeline ---
+  eval: {
+    nodes: [
+      n("LoadModel", { FINISHED: 1 }),
+      n("LoadTestDataset", { FINISHED: 5000 }),
+      n("RunInference", { FINISHED: 4200, RUNNING: 80, PENDING_ARGS_AVAIL: 720 }),
+      n("LoadGoldenLabels", { FINISHED: 5000 }),
+      n("ComputeAccuracy", { FINISHED: 3800, PENDING_ARGS_AVAIL: 1200 }),
+      n("ComputeLatencyStats", { FINISHED: 4200 }),
+      n("ComputeF1Score", { FINISHED: 3800, PENDING_ARGS_AVAIL: 1200 }),
+      n("AggregateMetrics", { PENDING_ARGS_AVAIL: 1 }),
+      n("GenerateReport", { PENDING_ARGS_AVAIL: 1 }),
+    ],
+    actors: [],
+    edges: [
+      { source: "LoadModel", target: "RunInference" },
+      { source: "LoadTestDataset", target: "RunInference" },
+      { source: "RunInference", target: "ComputeAccuracy" },
+      { source: "RunInference", target: "ComputeLatencyStats" },
+      { source: "RunInference", target: "ComputeF1Score" },
+      { source: "LoadGoldenLabels", target: "ComputeAccuracy" },
+      { source: "LoadGoldenLabels", target: "ComputeF1Score" },
+      { source: "ComputeAccuracy", target: "AggregateMetrics" },
+      { source: "ComputeLatencyStats", target: "AggregateMetrics" },
+      { source: "ComputeF1Score", target: "AggregateMetrics" },
+      { source: "AggregateMetrics", target: "GenerateReport" },
+    ],
+  },
+};
+
+// Default: training pipeline (same as before)
+const DEFAULT_MOCK: DAGSummary = {
+  nodes: [
+    n("read_parquet", { FINISHED: 50000 }),
+    n("preprocess", { FINISHED: 36000, RUNNING: 80, PENDING_ARGS_AVAIL: 13920 }),
+    n("train_batch", { FINISHED: 1500, RUNNING: 80, FAILED: 12, PENDING_ARGS_AVAIL: 3408 }),
+    n("save_model", { PENDING_ARGS_AVAIL: 1 }),
+    n("load_weights", { FINISHED: 1 }),
+  ],
+  actors: [
+    {
+      name: "TrainWorker",
+      key: "actor:TrainWorker",
+      type: "ACTOR" as any,
+      state_counts: { ALIVE: 8 },
+      children: [],
+    },
+  ],
+  edges: [
+    { source: "read_parquet", target: "preprocess" },
+    { source: "preprocess", target: "train_batch" },
+    { source: "load_weights", target: "train_batch" },
+    { source: "train_batch", target: "save_model" },
+  ],
+};
+
 /**
  * Hook for fetching a job's task progress as a dataflow DAG.
  * Currently returns mock data for testing.
+ * Add ?dag=<scenario> to URL to switch DAG mock:
+ *   ?dag=data-pipeline  → Big Data Processing (ETL)
+ *   ?dag=training       → Model Training (Ray Train + Data)
+ *   ?dag=serving        → Model Serving (Ray Serve deployment graph)
+ *   ?dag=eval           → Evaluation Pipeline
+ *   (default)           → Simple training pipeline
  * TODO: Remove mock data and use real API once backend is deployed.
  */
 export const useJobProgressByDataflow = (
   jobId: string | undefined,
   enabled = true,
 ) => {
-  const mockSummary: DAGSummary | undefined = jobId && enabled ? {
-    nodes: [
-      {
-        name: "read_parquet",
-        key: "read_parquet",
-        type: "NORMAL_TASK" as any,
-        state_counts: { FINISHED: 50000 },
-        children: [],
-      },
-      {
-        name: "preprocess",
-        key: "preprocess",
-        type: "NORMAL_TASK" as any,
-        state_counts: { FINISHED: 36000, RUNNING: 80, PENDING_ARGS_AVAIL: 13920 },
-        children: [],
-      },
-      {
-        name: "train_batch",
-        key: "train_batch",
-        type: "NORMAL_TASK" as any,
-        state_counts: { FINISHED: 1500, RUNNING: 80, FAILED: 12, PENDING_ARGS_AVAIL: 3408 },
-        children: [],
-      },
-      {
-        name: "save_model",
-        key: "save_model",
-        type: "NORMAL_TASK" as any,
-        state_counts: { PENDING_ARGS_AVAIL: 1 },
-        children: [],
-      },
-      {
-        name: "load_weights",
-        key: "load_weights",
-        type: "NORMAL_TASK" as any,
-        state_counts: { FINISHED: 1 },
-        children: [],
-      },
-    ],
-    actors: [
-      {
-        name: "TrainWorker",
-        key: "actor:TrainWorker",
-        type: "ACTOR" as any,
-        state_counts: { ALIVE: 8 },
-        children: [],
-      },
-    ],
-    edges: [
-      { source: "read_parquet", target: "preprocess" },
-      { source: "preprocess", target: "train_batch" },
-      { source: "load_weights", target: "train_batch" },
-      { source: "train_batch", target: "save_model" },
-    ],
-  } : undefined;
+  // Read ?dag= param from URL for mock scenario switching
+  const params = new URLSearchParams(window.location.search);
+  const scenario = params.get("dag") ?? "";
+
+  const mockSummary: DAGSummary | undefined =
+    jobId && enabled
+      ? MOCK_SCENARIOS[scenario] ?? DEFAULT_MOCK
+      : undefined;
 
   return {
     dagSummary: mockSummary,

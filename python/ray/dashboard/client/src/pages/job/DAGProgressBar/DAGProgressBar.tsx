@@ -203,7 +203,22 @@ const formatDuration = (ms: number | null): string => {
 
 // --- Mock task data for testing ---
 // TODO: Remove mock data and use real API (fetchTasksByFuncName) once backend is deployed.
-const MOCK_TASK_DETAILS: Record<string, { durationStats: DurationStats; resources: Record<string, number>; retryStats: { retriedCount: number; maxAttempt: number }; callSite: string }> = {
+type MockDetail = {
+  durationStats: DurationStats;
+  resources: Record<string, number>;
+  retryStats: { retriedCount: number; maxAttempt: number };
+  callSite: string | null;
+};
+
+const FALLBACK_DETAIL: MockDetail = {
+  durationStats: { count: 0, min: null, p50: null, p95: null, max: null },
+  resources: { CPU: 1 },
+  retryStats: { retriedCount: 0, maxAttempt: 0 },
+  callSite: null,
+};
+
+const MOCK_TASK_DETAILS: Record<string, MockDetail> = {
+  // --- Default / Training pipeline ---
   read_parquet: {
     durationStats: { count: 50000, min: 12, p50: 45, p95: 120, max: 380 },
     resources: { CPU: 1 },
@@ -234,6 +249,208 @@ const MOCK_TASK_DETAILS: Record<string, { durationStats: DurationStats; resource
     retryStats: { retriedCount: 0, maxAttempt: 0 },
     callSite: "pipeline.py:82 in build_pipeline\n  save_model.remote(checkpoint)",
   },
+  // --- Big Data Processing (ETL) ---
+  ReadCSV: {
+    durationStats: { count: 120000, min: 5, p50: 18, p95: 45, max: 120 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "etl.py:23 in build_etl\n  ReadCSV.remote(file_path)",
+  },
+  FilterInvalid: {
+    durationStats: { count: 120000, min: 2, p50: 8, p95: 22, max: 65 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "etl.py:30 in build_etl\n  FilterInvalid.remote(record)",
+  },
+  ParseJSON: {
+    durationStats: { count: 115000, min: 10, p50: 35, p95: 80, max: 250 },
+    resources: { CPU: 1, memory: 2000000000 },
+    retryStats: { retriedCount: 45, maxAttempt: 2 },
+    callSite: "etl.py:38 in build_etl\n  ParseJSON.remote(raw_text)",
+  },
+  FetchUserProfile: {
+    durationStats: { count: 80000, min: 50, p50: 180, p95: 800, max: 3200 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 320, maxAttempt: 3 },
+    callSite: "etl.py:45 in build_etl\n  FetchUserProfile.remote(user_id)",
+  },
+  FetchGeoData: {
+    durationStats: { count: 95000, min: 30, p50: 90, p95: 400, max: 1800 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 180, maxAttempt: 3 },
+    callSite: "etl.py:52 in build_etl\n  FetchGeoData.remote(ip_address)",
+  },
+  JoinFeatures: {
+    durationStats: { count: 60000, min: 20, p50: 65, p95: 150, max: 420 },
+    resources: { CPU: 2, memory: 4000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "etl.py:60 in build_etl\n  JoinFeatures.remote(user, geo, parsed)",
+  },
+  Deduplicate: {
+    durationStats: { count: 40000, min: 15, p50: 50, p95: 120, max: 300 },
+    resources: { CPU: 1, memory: 2000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "etl.py:68 in build_etl\n  Deduplicate.remote(features)",
+  },
+  WriteParquet: {
+    durationStats: { count: 25000, min: 30, p50: 85, p95: 200, max: 600 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 5, maxAttempt: 1 },
+    callSite: "etl.py:75 in build_etl\n  WriteParquet.remote(batch, output_path)",
+  },
+  // --- Model Training ---
+  ReadParquet: {
+    durationStats: { count: 50000, min: 10, p50: 40, p95: 100, max: 350 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "train.py:28 in data_pipeline\n  ReadParquet.remote(shard_path)",
+  },
+  Tokenize: {
+    durationStats: { count: 48000, min: 15, p50: 55, p95: 150, max: 400 },
+    resources: { CPU: 1, memory: 2000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "train.py:35 in data_pipeline\n  Tokenize.remote(text_block)",
+  },
+  Augment: {
+    durationStats: { count: 45000, min: 20, p50: 70, p95: 200, max: 550 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "train.py:42 in data_pipeline\n  Augment.remote(tokens)",
+  },
+  ShuffleAndBatch: {
+    durationStats: { count: 40000, min: 5, p50: 25, p95: 60, max: 180 },
+    resources: { CPU: 1, memory: 4000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "train.py:50 in data_pipeline\n  ShuffleAndBatch.remote(augmented)",
+  },
+  LoadCheckpoint: {
+    durationStats: { count: 1, min: 4500, p50: 4500, p95: 4500, max: 4500 },
+    resources: { CPU: 1, memory: 16000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "train.py:22 in setup\n  LoadCheckpoint.remote(ckpt_path)",
+  },
+  TrainStep: {
+    durationStats: { count: 8500, min: 800, p50: 1500, p95: 2800, max: 6200 },
+    resources: { CPU: 4, GPU: 1, memory: 16000000000 },
+    retryStats: { retriedCount: 3, maxAttempt: 2 },
+    callSite: "train.py:65 in training_loop\n  TrainStep.remote(batch, model_state)",
+  },
+  ValidateEpoch: {
+    durationStats: { count: 17, min: 12000, p50: 15000, p95: 18000, max: 22000 },
+    resources: { CPU: 4, GPU: 1, memory: 16000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "train.py:80 in training_loop\n  ValidateEpoch.remote(model_state, val_data)",
+  },
+  SaveCheckpoint: {
+    durationStats: { count: 17, min: 2000, p50: 2500, p95: 3500, max: 4000 },
+    resources: { CPU: 1, memory: 16000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "train.py:90 in training_loop\n  SaveCheckpoint.remote(model_state, epoch)",
+  },
+  // --- Model Serving ---
+  HTTPIngress: {
+    durationStats: { count: 285000, min: 1, p50: 3, p95: 8, max: 25 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: null,
+  },
+  Preprocess: {
+    durationStats: { count: 284500, min: 2, p50: 5, p95: 15, max: 40 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: null,
+  },
+  Tokenizer: {
+    durationStats: { count: 284000, min: 3, p50: 12, p95: 35, max: 80 },
+    resources: { CPU: 1, memory: 2000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: null,
+  },
+  EmbeddingModel: {
+    durationStats: { count: 280000, min: 8, p50: 25, p95: 60, max: 150 },
+    resources: { CPU: 1, GPU: 1, memory: 4000000000 },
+    retryStats: { retriedCount: 50, maxAttempt: 1 },
+    callSite: null,
+  },
+  RetrievalIndex: {
+    durationStats: { count: 280000, min: 5, p50: 15, p95: 45, max: 120 },
+    resources: { CPU: 2, memory: 8000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: null,
+  },
+  LLMGenerate: {
+    durationStats: { count: 260000, min: 200, p50: 850, p95: 2400, max: 8500 },
+    resources: { CPU: 1, GPU: 1, memory: 32000000000 },
+    retryStats: { retriedCount: 150, maxAttempt: 2 },
+    callSite: null,
+  },
+  Guardrails: {
+    durationStats: { count: 259000, min: 5, p50: 20, p95: 50, max: 120 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: null,
+  },
+  ResponseFormatter: {
+    durationStats: { count: 258000, min: 1, p50: 4, p95: 10, max: 30 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: null,
+  },
+  // --- Eval pipeline ---
+  LoadModel: {
+    durationStats: { count: 1, min: 5200, p50: 5200, p95: 5200, max: 5200 },
+    resources: { CPU: 1, GPU: 1, memory: 16000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "eval.py:15 in run_eval\n  LoadModel.remote(model_path)",
+  },
+  LoadTestDataset: {
+    durationStats: { count: 5000, min: 8, p50: 30, p95: 80, max: 200 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "eval.py:22 in run_eval\n  LoadTestDataset.remote(dataset_path)",
+  },
+  RunInference: {
+    durationStats: { count: 4200, min: 50, p50: 180, p95: 500, max: 1200 },
+    resources: { CPU: 1, GPU: 1 },
+    retryStats: { retriedCount: 8, maxAttempt: 2 },
+    callSite: "eval.py:30 in run_eval\n  RunInference.remote(model, sample)",
+  },
+  LoadGoldenLabels: {
+    durationStats: { count: 5000, min: 3, p50: 10, p95: 25, max: 60 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "eval.py:25 in run_eval\n  LoadGoldenLabels.remote(label_path)",
+  },
+  ComputeAccuracy: {
+    durationStats: { count: 3800, min: 2, p50: 8, p95: 20, max: 50 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "eval.py:42 in run_eval\n  ComputeAccuracy.remote(pred, label)",
+  },
+  ComputeLatencyStats: {
+    durationStats: { count: 4200, min: 1, p50: 3, p95: 8, max: 20 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "eval.py:48 in run_eval\n  ComputeLatencyStats.remote(timing)",
+  },
+  ComputeF1Score: {
+    durationStats: { count: 3800, min: 3, p50: 10, p95: 25, max: 55 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "eval.py:54 in run_eval\n  ComputeF1Score.remote(pred, label)",
+  },
+  AggregateMetrics: {
+    durationStats: { count: 0, min: null, p50: null, p95: null, max: null },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "eval.py:62 in run_eval\n  AggregateMetrics.remote(*metrics)",
+  },
+  GenerateReport: {
+    durationStats: { count: 0, min: null, p50: null, p95: null, max: null },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "eval.py:70 in run_eval\n  GenerateReport.remote(aggregated)",
+  },
 };
 
 type DAGNodeDetailPanelProps = {
@@ -263,7 +480,7 @@ const DAGNodeDetailPanel = ({
   // const retryStats = useMemo(() => { ... from tasks ... }, [tasks]);
   // const callSite = useMemo(() => tasks.find(t => t.call_site)?.call_site ?? null, [tasks]);
 
-  const mock = MOCK_TASK_DETAILS[summary.name] ?? MOCK_TASK_DETAILS["read_parquet"];
+  const mock = MOCK_TASK_DETAILS[summary.name] ?? FALLBACK_DETAIL;
   const durationStats = mock.durationStats;
   const resources = mock.resources;
   const retryStats = mock.retryStats;
