@@ -1042,6 +1042,10 @@ class TaskSummaries:
     #: Total scheduled actors.
     total_actor_scheduled: int
     summary_by: str = "func_name"
+    #: Dataflow DAG edges (only populated when summary_by="dataflow").
+    dataflow_edges: Optional[List[Dict[str, str]]] = None
+    #: Actor groups (only populated when summary_by="dataflow").
+    dataflow_actors: Optional[List[Dict]] = None
 
     @classmethod
     def to_summary_by_func_name(cls, *, tasks: List[Dict]) -> "TaskSummaries":
@@ -1473,17 +1477,17 @@ class TaskSummaries:
         sorted_nodes = _topological_sort_dataflow(list(nodes.values()), edges)
 
         return TaskSummaries(
-            summary={
-                "nodes": [_nested_task_summary_to_dict(n) for n in sorted_nodes],
-                "actors": [
-                    _nested_task_summary_to_dict(n) for n in actor_nodes.values()
-                ],
-                "edges": [{"source": e[0], "target": e[1]} for e in edges],
-            },
+            summary=sorted_nodes,
             total_tasks=total_tasks,
             total_actor_tasks=total_actor_tasks,
             total_actor_scheduled=total_actor_scheduled,
             summary_by="dataflow",
+            dataflow_edges=[
+                {"source": e[0], "target": e[1]} for e in edges
+            ],
+            dataflow_actors=[
+                _nested_task_summary_to_dict(n) for n in actor_nodes.values()
+            ],
         )
 
 

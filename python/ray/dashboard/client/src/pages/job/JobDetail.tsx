@@ -189,7 +189,7 @@ export const JobDetailChartsPage = () => {
           sx={{ marginBottom: 4 }}
         >
           <Section>
-            <DAGProgressBar summary={dagSummary} />
+            <DAGProgressBar summary={dagSummary} jobId={job.job_id} />
           </Section>
         </CollapsibleSection>
       )}

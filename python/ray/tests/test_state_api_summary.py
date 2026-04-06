@@ -689,5 +689,246 @@ def test_summarize_by_lineage():
     assert summary.summary == expected_summary
 
 
+def test_summarize_by_dataflow():
+    """
+    Unit test for summarize by dataflow.
+
+    Simulates a pipeline: read_parquet -> preprocess -> train_batch
+    Each task has return_object_ids and the downstream task has
+    dependency_object_ids pointing to the upstream's returns.
+    Verifies that:
+    1. Nodes are grouped by func_or_class_name
+    2. Edges are derived from ObjectRef producer->consumer relationships
+    3. State counts are correct
+    4. Topological sort puts upstream nodes first
+    5. Actors are grouped separately
+    """
+    tasks = []
+
+    # Stage 1: read_parquet (5 tasks, all finished)
+    for i in range(5):
+        tasks.append({
+            "task_id": f"read-{i}",
+            "name": "read_parquet",
+            "func_or_class_name": "read_parquet",
+            "parent_task_id": f"{DRIVER_TASK_ID_PREFIX}01000000",
+            "state": "FINISHED",
+            "type": "NORMAL_TASK",
+            "actor_id": None,
+            "creation_time_ms": 1000 + i,
+            "return_object_ids": [f"obj-read-{i}"],
+            "dependency_object_ids": [],
+        })
+
+    # Stage 2: preprocess (5 tasks, 3 finished, 2 running)
+    # Each depends on the corresponding read_parquet output
+    for i in range(5):
+        tasks.append({
+            "task_id": f"preprocess-{i}",
+            "name": "preprocess",
+            "func_or_class_name": "preprocess",
+            "parent_task_id": f"{DRIVER_TASK_ID_PREFIX}01000000",
+            "state": "FINISHED" if i < 3 else "RUNNING",
+            "type": "NORMAL_TASK",
+            "actor_id": None,
+            "creation_time_ms": 2000 + i,
+            "return_object_ids": [f"obj-preprocess-{i}"],
+            "dependency_object_ids": [f"obj-read-{i}"],
+        })
+
+    # Stage 3: train_batch (5 tasks, 1 finished, 1 running, 2 pending, 1 failed)
+    # Each depends on the corresponding preprocess output
+    states = ["FINISHED", "RUNNING", "PENDING_ARGS_AVAIL", "PENDING_ARGS_AVAIL", "FAILED"]
+    for i in range(5):
+        tasks.append({
+            "task_id": f"train-{i}",
+            "name": "train_batch",
+            "func_or_class_name": "train_batch",
+            "parent_task_id": f"{DRIVER_TASK_ID_PREFIX}01000000",
+            "state": states[i],
+            "type": "NORMAL_TASK",
+            "actor_id": None,
+            "creation_time_ms": 3000 + i,
+            "return_object_ids": [f"obj-train-{i}"],
+            "dependency_object_ids": [f"obj-preprocess-{i}"],
+        })
+
+    # Actors
+    actors = [
+        {"actor_id": f"actor-{i}", "class_name": "TrainWorker", "repr_name": "", "state": "ALIVE"}
+        for i in range(3)
+    ]
+
+    # Randomize task order to test robustness
+    random.shuffle(tasks)
+
+    summary = TaskSummaries.to_summary_by_dataflow(tasks=tasks, actors=actors)
+
+    # Check totals
+    assert summary.total_tasks == 15
+    assert summary.total_actor_tasks == 0
+    assert summary.total_actor_scheduled == 0
+    assert summary.summary_by == "dataflow"
+
+    # Check structure
+    result = summary.summary
+    assert "nodes" in result
+    assert "edges" in result
+    assert "actors" in result
+
+    # Check nodes (3 groups)
+    nodes = result["nodes"]
+    assert len(nodes) == 3
+    node_names = [n["name"] for n in nodes]
+
+    # Topological order: read_parquet -> preprocess -> train_batch
+    assert node_names.index("read_parquet") < node_names.index("preprocess")
+    assert node_names.index("preprocess") < node_names.index("train_batch")
+
+    # Check state counts for each node
+    node_by_name = {n["name"]: n for n in nodes}
+
+    read_node = node_by_name["read_parquet"]
+    assert read_node["state_counts"] == {"FINISHED": 5}
+
+    preprocess_node = node_by_name["preprocess"]
+    assert preprocess_node["state_counts"] == {"FINISHED": 3, "RUNNING": 2}
+
+    train_node = node_by_name["train_batch"]
+    assert train_node["state_counts"] == {
+        "FINISHED": 1,
+        "RUNNING": 1,
+        "PENDING_ARGS_AVAIL": 2,
+        "FAILED": 1,
+    }
+
+    # Check edges (2 edges: read->preprocess, preprocess->train)
+    edges = result["edges"]
+    assert len(edges) == 2
+    edge_tuples = {(e["source"], e["target"]) for e in edges}
+    assert ("read_parquet", "preprocess") in edge_tuples
+    assert ("preprocess", "train_batch") in edge_tuples
+
+    # Check actors (1 group: TrainWorker with 3 alive)
+    actors_result = result["actors"]
+    assert len(actors_result) == 1
+    assert actors_result[0]["name"] == "TrainWorker"
+    assert actors_result[0]["state_counts"] == {"ALIVE": 3}
+
+
+def test_summarize_by_dataflow_fan_out_fan_in():
+    """
+    Test fan-out/fan-in pattern:
+    fetch_users ──┐
+    fetch_products ├──> join_features ──> train
+    fetch_behavior ┘
+    """
+    tasks = []
+
+    # 3 parallel fetch stages
+    for stage in ["fetch_users", "fetch_products", "fetch_behavior"]:
+        for i in range(3):
+            tasks.append({
+                "task_id": f"{stage}-{i}",
+                "name": stage,
+                "func_or_class_name": stage,
+                "parent_task_id": f"{DRIVER_TASK_ID_PREFIX}01000000",
+                "state": "FINISHED",
+                "type": "NORMAL_TASK",
+                "actor_id": None,
+                "creation_time_ms": 1000,
+                "return_object_ids": [f"obj-{stage}-{i}"],
+                "dependency_object_ids": [],
+            })
+
+    # join_features depends on all 3 fetch stages
+    for i in range(3):
+        tasks.append({
+            "task_id": f"join-{i}",
+            "name": "join_features",
+            "func_or_class_name": "join_features",
+            "parent_task_id": f"{DRIVER_TASK_ID_PREFIX}01000000",
+            "state": "RUNNING",
+            "type": "NORMAL_TASK",
+            "actor_id": None,
+            "creation_time_ms": 2000,
+            "return_object_ids": [f"obj-join-{i}"],
+            "dependency_object_ids": [
+                f"obj-fetch_users-{i}",
+                f"obj-fetch_products-{i}",
+                f"obj-fetch_behavior-{i}",
+            ],
+        })
+
+    # train depends on join
+    tasks.append({
+        "task_id": "train-0",
+        "name": "train",
+        "func_or_class_name": "train",
+        "parent_task_id": f"{DRIVER_TASK_ID_PREFIX}01000000",
+        "state": "PENDING_ARGS_AVAIL",
+        "type": "NORMAL_TASK",
+        "actor_id": None,
+        "creation_time_ms": 3000,
+        "return_object_ids": ["obj-train-0"],
+        "dependency_object_ids": ["obj-join-0"],
+    })
+
+    random.shuffle(tasks)
+
+    summary = TaskSummaries.to_summary_by_dataflow(tasks=tasks, actors=[])
+    result = summary.summary
+
+    # 5 nodes
+    assert len(result["nodes"]) == 5
+
+    # 4 edges: 3 fetch->join + 1 join->train
+    edges = result["edges"]
+    assert len(edges) == 4
+    edge_tuples = {(e["source"], e["target"]) for e in edges}
+    assert ("fetch_users", "join_features") in edge_tuples
+    assert ("fetch_products", "join_features") in edge_tuples
+    assert ("fetch_behavior", "join_features") in edge_tuples
+    assert ("join_features", "train") in edge_tuples
+
+    # Topological order: all fetches before join, join before train
+    node_names = [n["name"] for n in result["nodes"]]
+    join_idx = node_names.index("join_features")
+    train_idx = node_names.index("train")
+    for fetch in ["fetch_users", "fetch_products", "fetch_behavior"]:
+        assert node_names.index(fetch) < join_idx
+    assert join_idx < train_idx
+
+
+def test_summarize_by_dataflow_no_dependencies():
+    """
+    Test with tasks that have no ObjectRef dependencies (e.g., Tune trials).
+    Should produce nodes with no edges.
+    """
+    tasks = []
+    for i in range(10):
+        tasks.append({
+            "task_id": f"trial-{i}",
+            "name": "Trainable.train",
+            "func_or_class_name": "Trainable.train",
+            "parent_task_id": f"{DRIVER_TASK_ID_PREFIX}01000000",
+            "state": "FINISHED" if i < 7 else "RUNNING",
+            "type": "NORMAL_TASK",
+            "actor_id": None,
+            "creation_time_ms": 1000 + i,
+            "return_object_ids": [],
+            "dependency_object_ids": [],
+        })
+
+    summary = TaskSummaries.to_summary_by_dataflow(tasks=tasks, actors=[])
+    result = summary.summary
+
+    # 1 node, 0 edges
+    assert len(result["nodes"]) == 1
+    assert len(result["edges"]) == 0
+    assert result["nodes"][0]["name"] == "Trainable.train"
+    assert result["nodes"][0]["state_counts"] == {"FINISHED": 7, "RUNNING": 3}
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main(["-v", __file__]))

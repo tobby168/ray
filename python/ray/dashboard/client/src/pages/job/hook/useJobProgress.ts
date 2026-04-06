@@ -9,6 +9,7 @@ import {
   getStateApiJobProgressByTaskName,
 } from "../../../service/job";
 import {
+  DAGSummary,
   JobProgressGroup,
   NestedJobProgress,
   StateApiJobProgressByTaskName,
@@ -341,38 +342,72 @@ export const useJobProgressByLineage = (
 
 /**
  * Hook for fetching a job's task progress as a dataflow DAG.
- * Refetches every 4 seconds.
+ * Currently returns mock data for testing.
+ * TODO: Remove mock data and use real API once backend is deployed.
  */
 export const useJobProgressByDataflow = (
   jobId: string | undefined,
   enabled = true,
 ) => {
-  const [msg, setMsg] = useState("Loading DAG...");
-  const [error, setError] = useState(false);
-
-  const { data, isLoading } = useSWR(
-    jobId && enabled ? ["useJobProgressByDataflow", jobId] : null,
-    async ([_, jobId]) => {
-      const rsp = await getStateApiJobProgressByDataflow(jobId);
-      setMsg(rsp.data.msg);
-
-      if (rsp.data.result) {
-        return rsp.data.data.result.result.node_id_to_summary.cluster.summary;
-      } else {
-        setError(true);
-        return undefined;
-      }
-    },
-    {
-      refreshInterval: enabled ? API_REFRESH_INTERVAL_MS : 0,
-      revalidateOnFocus: false,
-    },
-  );
+  const mockSummary: DAGSummary | undefined = jobId && enabled ? {
+    nodes: [
+      {
+        name: "read_parquet",
+        key: "read_parquet",
+        type: "NORMAL_TASK" as any,
+        state_counts: { FINISHED: 50000 },
+        children: [],
+      },
+      {
+        name: "preprocess",
+        key: "preprocess",
+        type: "NORMAL_TASK" as any,
+        state_counts: { FINISHED: 36000, RUNNING: 80, PENDING_ARGS_AVAIL: 13920 },
+        children: [],
+      },
+      {
+        name: "train_batch",
+        key: "train_batch",
+        type: "NORMAL_TASK" as any,
+        state_counts: { FINISHED: 1500, RUNNING: 80, FAILED: 12, PENDING_ARGS_AVAIL: 3408 },
+        children: [],
+      },
+      {
+        name: "save_model",
+        key: "save_model",
+        type: "NORMAL_TASK" as any,
+        state_counts: { PENDING_ARGS_AVAIL: 1 },
+        children: [],
+      },
+      {
+        name: "load_weights",
+        key: "load_weights",
+        type: "NORMAL_TASK" as any,
+        state_counts: { FINISHED: 1 },
+        children: [],
+      },
+    ],
+    actors: [
+      {
+        name: "TrainWorker",
+        key: "actor:TrainWorker",
+        type: "ACTOR" as any,
+        state_counts: { ALIVE: 8 },
+        children: [],
+      },
+    ],
+    edges: [
+      { source: "read_parquet", target: "preprocess" },
+      { source: "preprocess", target: "train_batch" },
+      { source: "load_weights", target: "train_batch" },
+      { source: "train_batch", target: "save_model" },
+    ],
+  } : undefined;
 
   return {
-    dagSummary: data,
-    isLoading,
-    msg,
-    error,
+    dagSummary: mockSummary,
+    isLoading: false,
+    msg: "Mock data loaded",
+    error: false,
   };
 };
