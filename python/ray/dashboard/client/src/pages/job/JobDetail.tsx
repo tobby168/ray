@@ -13,12 +13,14 @@ import TitleCard from "../../components/TitleCard";
 import { getDataDatasets } from "../../service/data";
 import { NestedJobProgressLink } from "../../type/job";
 import ActorList from "../actor/ActorList";
+import { DAGProgressBar } from "./DAGProgressBar";
 import DataOverview from "../data/DataOverview";
 import { NodeCountCard } from "../overview/cards/NodeCountCard";
 import PlacementGroupList from "../state/PlacementGroup";
 import TaskList from "../state/task";
 import { useRayStatus } from "./hook/useClusterStatus";
 import { useJobDetail } from "./hook/useJobDetail";
+import { useJobProgressByDataflow } from "./hook/useJobProgress";
 import { JobMetadataSection } from "./JobDetailInfoPage";
 import { JobDriverLogs } from "./JobDriverLogs";
 import { JobProgressBar } from "./JobProgressBar";
@@ -35,6 +37,10 @@ export const JobDetailChartsPage = () => {
   const [actorTableExpanded, setActorTableExpanded] = useState(false);
   const actorTableRef = useRef<HTMLDivElement>(null);
   const { clusterStatus } = useRayStatus();
+  const { dagSummary } = useJobProgressByDataflow(
+    job?.job_id ? job.job_id : undefined,
+    true,
+  );
 
   const { data } = useSWR(
     job?.job_id ? ["useDataDatasets", job.job_id] : null,
@@ -176,6 +182,17 @@ export const JobDetailChartsPage = () => {
           </Section>
         </Box>
       </CollapsibleSection>
+
+      {job.job_id && (
+        <CollapsibleSection
+          title="Dataflow DAG"
+          sx={{ marginBottom: 4 }}
+        >
+          <Section>
+            <DAGProgressBar summary={dagSummary} />
+          </Section>
+        </CollapsibleSection>
+      )}
 
       {job.job_id && (
         <React.Fragment>

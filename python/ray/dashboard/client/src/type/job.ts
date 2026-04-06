@@ -192,3 +192,38 @@ export type StateApiNestedJobProgressRsp = {
   msg: string;
   result: boolean;
 };
+
+export type DAGEdge = {
+  source: string;
+  target: string;
+};
+
+export type DAGSummary = {
+  nodes: NestedJobProgress[];
+  actors: NestedJobProgress[];
+  edges: DAGEdge[];
+};
+
+export type StateApiDAGSummary = {
+  node_id_to_summary: {
+    cluster: {
+      summary: DAGSummary;
+      summary_by: "dataflow";
+      total_tasks: number;
+      total_actor_tasks: number;
+      total_actor_scheduled: number;
+    };
+  };
+};
+
+export type StateApiDAGSummaryRsp = {
+  data: {
+    result: {
+      result: StateApiDAGSummary;
+      num_filtered: number;
+      total: number;
+    };
+  };
+  msg: string;
+  result: boolean;
+};

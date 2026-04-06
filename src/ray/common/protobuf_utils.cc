@@ -236,6 +236,14 @@ void FillTaskInfo(rpc::TaskInfoEntry *task_info, const TaskSpecification &task_s
     task_info->mutable_fallback_strategy()->CopyFrom(
         task_spec.GetMessage().fallback_strategy());
   }
+
+  // Populate dependency and return object IDs for dataflow DAG visualization.
+  for (const auto &dep_id : task_spec.GetDependencyIds()) {
+    task_info->add_dependency_object_ids(dep_id.Binary());
+  }
+  for (size_t i = 0; i < task_spec.NumReturns(); i++) {
+    task_info->add_return_object_ids(task_spec.ReturnId(i).Binary());
+  }
 }
 
 void FillExportTaskInfo(rpc::ExportTaskEventData::TaskInfoEntry *task_info,

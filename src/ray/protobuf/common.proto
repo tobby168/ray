@@ -662,6 +662,14 @@ message TaskInfoEntry {
   map<string, string> label_selector = 28;
 
   optional FallbackStrategy fallback_strategy = 29;
+
+  // ObjectIDs this task depends on (extracted from pass-by-ref args).
+  // Used to build dataflow DAG edges between task groups in the dashboard.
+  repeated bytes dependency_object_ids = 30;
+
+  // ObjectIDs this task produces (return values).
+  // Used to build dataflow DAG edges between task groups in the dashboard.
+  repeated bytes return_object_ids = 31;
 }
 
 message TaskAttempt {

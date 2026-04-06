@@ -570,8 +570,10 @@ class StateAPIManager:
 
     async def summarize_tasks(self, option: SummaryApiOptions) -> SummaryApiResponse:
         summary_by = option.summary_by or "func_name"
-        if summary_by not in ["func_name", "lineage"]:
-            raise ValueError('summary_by must be one of "func_name" or "lineage".')
+        if summary_by not in ["func_name", "lineage", "dataflow"]:
+            raise ValueError(
+                'summary_by must be one of "func_name", "lineage", or "dataflow".'
+            )
 
         # For summary, try getting as many entries as possible to minimze data loss.
         result = await self.list_tasks(
@@ -579,13 +581,13 @@ class StateAPIManager:
                 timeout=option.timeout,
                 limit=RAY_MAX_LIMIT_FROM_API_SERVER,
                 filters=option.filters,
-                detail=summary_by == "lineage",
+                detail=summary_by in ("lineage", "dataflow"),
             )
         )
 
         if summary_by == "func_name":
             summary_results = TaskSummaries.to_summary_by_func_name(tasks=result.result)
-        else:
+        elif summary_by == "lineage":
             # We will need the actors info for actor tasks.
             actors = await self.list_actors(
                 option=ListApiOptions(
@@ -595,6 +597,17 @@ class StateAPIManager:
                 )
             )
             summary_results = TaskSummaries.to_summary_by_lineage(
+                tasks=result.result, actors=actors.result
+            )
+        elif summary_by == "dataflow":
+            actors = await self.list_actors(
+                option=ListApiOptions(
+                    timeout=option.timeout,
+                    limit=RAY_MAX_LIMIT_FROM_API_SERVER,
+                    detail=True,
+                )
+            )
+            summary_results = TaskSummaries.to_summary_by_dataflow(
                 tasks=result.result, actors=actors.result
             )
         summary = StateSummary(node_id_to_summary={"cluster": summary_results})

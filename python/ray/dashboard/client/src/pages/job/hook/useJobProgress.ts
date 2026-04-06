@@ -4,6 +4,7 @@ import useSWR from "swr";
 import { API_REFRESH_INTERVAL_MS } from "../../../common/constants";
 import { sliceToPage } from "../../../common/util";
 import {
+  getStateApiJobProgressByDataflow,
   getStateApiJobProgressByLineage,
   getStateApiJobProgressByTaskName,
 } from "../../../service/job";
@@ -202,7 +203,7 @@ export const useJobProgressByTaskName = (jobId: string) => {
   };
 };
 
-const formatStateCountsToProgress = (stateCounts: {
+export const formatStateCountsToProgress = (stateCounts: {
   [stateName: string]: number;
 }) => {
   const formattedProgress: TaskProgress = {};
@@ -335,5 +336,43 @@ export const useJobProgressByLineage = (
     msg,
     error,
     latestFetchTimestamp,
+  };
+};
+
+/**
+ * Hook for fetching a job's task progress as a dataflow DAG.
+ * Refetches every 4 seconds.
+ */
+export const useJobProgressByDataflow = (
+  jobId: string | undefined,
+  enabled = true,
+) => {
+  const [msg, setMsg] = useState("Loading DAG...");
+  const [error, setError] = useState(false);
+
+  const { data, isLoading } = useSWR(
+    jobId && enabled ? ["useJobProgressByDataflow", jobId] : null,
+    async ([_, jobId]) => {
+      const rsp = await getStateApiJobProgressByDataflow(jobId);
+      setMsg(rsp.data.msg);
+
+      if (rsp.data.result) {
+        return rsp.data.data.result.result.node_id_to_summary.cluster.summary;
+      } else {
+        setError(true);
+        return undefined;
+      }
+    },
+    {
+      refreshInterval: enabled ? API_REFRESH_INTERVAL_MS : 0,
+      revalidateOnFocus: false,
+    },
+  );
+
+  return {
+    dagSummary: data,
+    isLoading,
+    msg,
+    error,
   };
 };

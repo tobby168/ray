@@ -820,6 +820,14 @@ class TaskState(StateSchema):
     #: The label selector for the task.
     label_selector: Optional[dict] = state_column(detail=True, filterable=False)
     fallback_strategy: Optional[dict] = state_column(detail=True, filterable=False)
+    #: ObjectIDs this task depends on (pass-by-ref arguments).
+    dependency_object_ids: Optional[List[str]] = state_column(
+        detail=True, filterable=False
+    )
+    #: ObjectIDs this task returns.
+    return_object_ids: Optional[List[str]] = state_column(
+        detail=True, filterable=False
+    )
 
 
 @dataclass(init=not IS_PYDANTIC_2)
@@ -1377,6 +1385,159 @@ class TaskSummaries:
             summary_by="lineage",
         )
 
+    @classmethod
+    def to_summary_by_dataflow(
+        cls, *, tasks: List[Dict], actors: List[Dict]
+    ) -> "TaskSummaries":
+        """
+        Summarize tasks as a dataflow DAG.
+
+        Unlike lineage (parent_task_id = who submitted), dataflow uses ObjectRef
+        dependencies (who produced the data I consume) to build edges between
+        task groups aggregated by func_or_class_name.
+
+        Steps:
+        1. Build object_id -> producer_func_name mapping from return_object_ids
+        2. Build edges from dependency_object_ids -> producer lookups
+        3. Group tasks by func_or_class_name with state counts
+        4. Group actors by class_name
+        5. Topological sort nodes
+        """
+        # --- Build object -> producer mapping ---
+        object_to_producer: Dict[str, str] = {}
+        for task in tasks:
+            func_name = task.get("name") or task["func_or_class_name"]
+            for obj_id in (task.get("return_object_ids") or []):
+                object_to_producer[obj_id] = func_name
+
+        # --- Build group-level edges ---
+        edges: set = set()
+        for task in tasks:
+            consumer = task.get("name") or task["func_or_class_name"]
+            for obj_id in (task.get("dependency_object_ids") or []):
+                producer = object_to_producer.get(obj_id)
+                if producer and producer != consumer:
+                    edges.add((producer, consumer))
+
+        # --- Group tasks by func name with state counts ---
+        nodes: Dict[str, NestedTaskSummary] = {}
+        total_tasks = 0
+        total_actor_tasks = 0
+        total_actor_scheduled = 0
+
+        for task in tasks:
+            func_name = task.get("name") or task["func_or_class_name"]
+            if func_name not in nodes:
+                nodes[func_name] = NestedTaskSummary(
+                    name=func_name,
+                    key=func_name,
+                    type=task["type"],
+                    timestamp=task.get("creation_time_ms"),
+                )
+            node = nodes[func_name]
+
+            state = task["state"]
+            node.state_counts[state] = node.state_counts.get(state, 0) + 1
+
+            task_ts = task.get("creation_time_ms")
+            if task_ts and (node.timestamp is None or task_ts < node.timestamp):
+                node.timestamp = task_ts
+
+            type_enum = TaskType.DESCRIPTOR.values_by_name[task["type"]].number
+            if type_enum == TaskType.NORMAL_TASK:
+                total_tasks += 1
+            elif type_enum == TaskType.ACTOR_CREATION_TASK:
+                total_actor_scheduled += 1
+            elif type_enum == TaskType.ACTOR_TASK:
+                total_actor_tasks += 1
+
+        # --- Group actors by class name ---
+        actor_nodes: Dict[str, NestedTaskSummary] = {}
+        for actor in actors:
+            class_name = (
+                actor.get("repr_name") or actor.get("class_name", "UnknownActor")
+            )
+            if class_name not in actor_nodes:
+                actor_nodes[class_name] = NestedTaskSummary(
+                    name=class_name,
+                    key=f"actor:{class_name}",
+                    type="ACTOR",
+                )
+            ag = actor_nodes[class_name]
+            actor_state = actor.get("state", "UNKNOWN")
+            ag.state_counts[actor_state] = (
+                ag.state_counts.get(actor_state, 0) + 1
+            )
+
+        # --- Topological sort ---
+        sorted_nodes = _topological_sort_dataflow(list(nodes.values()), edges)
+
+        return TaskSummaries(
+            summary={
+                "nodes": [_nested_task_summary_to_dict(n) for n in sorted_nodes],
+                "actors": [
+                    _nested_task_summary_to_dict(n) for n in actor_nodes.values()
+                ],
+                "edges": [{"source": e[0], "target": e[1]} for e in edges],
+            },
+            total_tasks=total_tasks,
+            total_actor_tasks=total_actor_tasks,
+            total_actor_scheduled=total_actor_scheduled,
+            summary_by="dataflow",
+        )
+
+
+def _topological_sort_dataflow(
+    nodes: List[NestedTaskSummary],
+    edges: set,
+) -> List[NestedTaskSummary]:
+    """Sort nodes so upstream nodes come before downstream nodes."""
+    from collections import deque
+
+    node_map = {n.name: n for n in nodes}
+    in_degree = {n.name: 0 for n in nodes}
+    adj: Dict[str, List[str]] = {n.name: [] for n in nodes}
+
+    for src, dst in edges:
+        if src in adj and dst in in_degree:
+            adj[src].append(dst)
+            in_degree[dst] = in_degree.get(dst, 0) + 1
+
+    # BFS-based topological sort
+    queue = deque(
+        sorted(
+            [name for name, deg in in_degree.items() if deg == 0],
+            key=lambda n: node_map[n].timestamp or 0,
+        )
+    )
+    order = []
+    while queue:
+        name = queue.popleft()
+        order.append(name)
+        for neighbor in adj.get(name, []):
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    # Append any remaining (cycles or disconnected)
+    for n in nodes:
+        if n.name not in order:
+            order.append(n.name)
+
+    return [node_map[name] for name in order if name in node_map]
+
+
+def _nested_task_summary_to_dict(summary: NestedTaskSummary) -> dict:
+    """Convert NestedTaskSummary to a JSON-serializable dict."""
+    return {
+        "name": summary.name,
+        "key": summary.key,
+        "type": summary.type,
+        "state_counts": dict(summary.state_counts),
+        "children": [],
+        "timestamp": summary.timestamp,
+    }
+
 
 @dataclass(init=not IS_PYDANTIC_2)
 class ActorSummaryPerClass:
@@ -1660,6 +1821,15 @@ def protobuf_to_task_state_dict(message: TaskEvents) -> dict:
     for src, keys in mappings:
         for key in keys:
             task_state[key] = src.get(key)
+
+    if task_info.get("dependency_object_ids"):
+        task_state["dependency_object_ids"] = [
+            dep_id.hex() for dep_id in task_info["dependency_object_ids"]
+        ]
+    if task_info.get("return_object_ids"):
+        task_state["return_object_ids"] = [
+            ret_id.hex() for ret_id in task_info["return_object_ids"]
+        ]
 
     task_state["creation_time_ms"] = None
     task_state["start_time_ms"] = None
