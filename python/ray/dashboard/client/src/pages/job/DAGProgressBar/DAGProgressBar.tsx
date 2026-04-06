@@ -422,21 +422,27 @@ const DAGNodeDetailPanel = ({
       <Typography variant="caption" color="text.secondary" fontWeight={600}>
         Call Site
       </Typography>
-      <Typography
-        variant="caption"
-        display="block"
-        sx={{
-          fontFamily: "monospace",
-          bgcolor: theme.palette.grey[100],
-          p: 0.5,
-          borderRadius: 0.5,
-          mt: 0.5,
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-all",
-        }}
-      >
-        {callSite}
-      </Typography>
+      {callSite ? (
+        <Typography
+          variant="caption"
+          display="block"
+          sx={{
+            fontFamily: "monospace",
+            bgcolor: theme.palette.grey[100],
+            p: 0.5,
+            borderRadius: 0.5,
+            mt: 0.5,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-all",
+          }}
+        >
+          {callSite}
+        </Typography>
+      ) : (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+          Not available. Set RAY_record_ref_creation_sites=1 to enable.
+        </Typography>
+      )}
     </Paper>
   );
 };
