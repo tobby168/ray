@@ -217,239 +217,140 @@ const FALLBACK_DETAIL: MockDetail = {
   callSite: null,
 };
 
+// Based on real Ray task API output. Names use task.name field (not func_or_class_name).
+// Ray Data: func_or_class_name="_map_task", name="ReadParquet"/"Map(fn)"/"Filter(fn)" etc.
+// Ray Core: func_or_class_name matches function name directly.
+// Ray Serve: no task-level DAG (actors handle requests internally).
 const MOCK_TASK_DETAILS: Record<string, MockDetail> = {
-  // --- Default / Training pipeline ---
-  read_parquet: {
-    durationStats: { count: 50000, min: 12, p50: 45, p95: 120, max: 380 },
-    resources: { CPU: 1 },
+  // --- Ray Data ETL (real task.name values) ---
+  // func_or_class_name is always "_map_task", resource is {CPU: 1} or {CPU: 1, memory: 128}
+  ReadParquet: {
+    durationStats: { count: 120000, min: 5, p50: 18, p95: 45, max: 120 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "pipeline.py:42 in build_pipeline\n  read_parquet.remote(path)",
+    callSite: null,  // Ray Data operators don't have call_site
+  },
+  "Map(parse_json)": {
+    durationStats: { count: 120000, min: 10, p50: 35, p95: 80, max: 250 },
+    resources: { CPU: 1.0, memory: 128.0 },
+    retryStats: { retriedCount: 45, maxAttempt: 2 },
+    callSite: null,
+  },
+  "Filter(validate)": {
+    durationStats: { count: 115000, min: 2, p50: 8, p95: 22, max: 65 },
+    resources: { CPU: 1.0 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: null,
+  },
+  "Map(fetch_user_profile)": {
+    durationStats: { count: 80000, min: 50, p50: 180, p95: 800, max: 3200 },
+    resources: { CPU: 1.0 },
+    retryStats: { retriedCount: 320, maxAttempt: 3 },
+    callSite: null,
+  },
+  "Map(fetch_geo_data)": {
+    durationStats: { count: 95000, min: 30, p50: 90, p95: 400, max: 1800 },
+    resources: { CPU: 1.0 },
+    retryStats: { retriedCount: 180, maxAttempt: 3 },
+    callSite: null,
+  },
+  _split_single_block: {
+    durationStats: { count: 60000, min: 1, p50: 5, p95: 15, max: 40 },
+    resources: { CPU: 1.0 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: null,
+  },
+  "MapBatches(deduplicate)": {
+    durationStats: { count: 40000, min: 15, p50: 50, p95: 120, max: 300 },
+    resources: { CPU: 1.0, memory: 128.0 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: null,
+  },
+  "Map(write_parquet)": {
+    durationStats: { count: 25000, min: 30, p50: 85, p95: 200, max: 600 },
+    resources: { CPU: 1.0 },
+    retryStats: { retriedCount: 5, maxAttempt: 1 },
+    callSite: null,
+  },
+  // --- Ray Core Training (real func names, verified) ---
+  load_data: {
+    durationStats: { count: 8, min: 280, p50: 320, p95: 480, max: 510 },
+    resources: { CPU: 1.0 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: null,
   },
   preprocess: {
-    durationStats: { count: 36000, min: 80, p50: 120, p95: 340, max: 890 },
-    resources: { CPU: 2, memory: 4000000000 },
-    retryStats: { retriedCount: 23, maxAttempt: 2 },
-    callSite: "pipeline.py:55 in build_pipeline\n  preprocess.remote(block)",
-  },
-  train_batch: {
-    durationStats: { count: 1500, min: 1200, p50: 2100, p95: 3200, max: 8700 },
-    resources: { CPU: 1, GPU: 1 },
-    retryStats: { retriedCount: 12, maxAttempt: 3 },
-    callSite: "pipeline.py:68 in build_pipeline\n  train_batch.remote(data, weights)",
-  },
-  load_weights: {
-    durationStats: { count: 1, min: 3200, p50: 3200, p95: 3200, max: 3200 },
-    resources: { CPU: 1, memory: 8000000000 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "pipeline.py:35 in build_pipeline\n  load_weights.remote(model_path)",
-  },
-  save_model: {
-    durationStats: { count: 0, min: null, p50: null, p95: null, max: null },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "pipeline.py:82 in build_pipeline\n  save_model.remote(checkpoint)",
-  },
-  // --- Big Data Processing (ETL) ---
-  ReadCSV: {
-    durationStats: { count: 120000, min: 5, p50: 18, p95: 45, max: 120 },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "etl.py:23 in build_etl\n  ReadCSV.remote(file_path)",
-  },
-  FilterInvalid: {
-    durationStats: { count: 120000, min: 2, p50: 8, p95: 22, max: 65 },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "etl.py:30 in build_etl\n  FilterInvalid.remote(record)",
-  },
-  ParseJSON: {
-    durationStats: { count: 115000, min: 10, p50: 35, p95: 80, max: 250 },
-    resources: { CPU: 1, memory: 2000000000 },
-    retryStats: { retriedCount: 45, maxAttempt: 2 },
-    callSite: "etl.py:38 in build_etl\n  ParseJSON.remote(raw_text)",
-  },
-  FetchUserProfile: {
-    durationStats: { count: 80000, min: 50, p50: 180, p95: 800, max: 3200 },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 320, maxAttempt: 3 },
-    callSite: "etl.py:45 in build_etl\n  FetchUserProfile.remote(user_id)",
-  },
-  FetchGeoData: {
-    durationStats: { count: 95000, min: 30, p50: 90, p95: 400, max: 1800 },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 180, maxAttempt: 3 },
-    callSite: "etl.py:52 in build_etl\n  FetchGeoData.remote(ip_address)",
-  },
-  JoinFeatures: {
-    durationStats: { count: 60000, min: 20, p50: 65, p95: 150, max: 420 },
-    resources: { CPU: 2, memory: 4000000000 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "etl.py:60 in build_etl\n  JoinFeatures.remote(user, geo, parsed)",
-  },
-  Deduplicate: {
-    durationStats: { count: 40000, min: 15, p50: 50, p95: 120, max: 300 },
-    resources: { CPU: 1, memory: 2000000000 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "etl.py:68 in build_etl\n  Deduplicate.remote(features)",
-  },
-  WriteParquet: {
-    durationStats: { count: 25000, min: 30, p50: 85, p95: 200, max: 600 },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 5, maxAttempt: 1 },
-    callSite: "etl.py:75 in build_etl\n  WriteParquet.remote(batch, output_path)",
-  },
-  // --- Model Training ---
-  ReadParquet: {
-    durationStats: { count: 50000, min: 10, p50: 40, p95: 100, max: 350 },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "train.py:28 in data_pipeline\n  ReadParquet.remote(shard_path)",
-  },
-  Tokenize: {
-    durationStats: { count: 48000, min: 15, p50: 55, p95: 150, max: 400 },
-    resources: { CPU: 1, memory: 2000000000 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "train.py:35 in data_pipeline\n  Tokenize.remote(text_block)",
-  },
-  Augment: {
-    durationStats: { count: 45000, min: 20, p50: 70, p95: 200, max: 550 },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "train.py:42 in data_pipeline\n  Augment.remote(tokens)",
-  },
-  ShuffleAndBatch: {
-    durationStats: { count: 40000, min: 5, p50: 25, p95: 60, max: 180 },
-    resources: { CPU: 1, memory: 4000000000 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "train.py:50 in data_pipeline\n  ShuffleAndBatch.remote(augmented)",
-  },
-  LoadCheckpoint: {
-    durationStats: { count: 1, min: 4500, p50: 4500, p95: 4500, max: 4500 },
-    resources: { CPU: 1, memory: 16000000000 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "train.py:22 in setup\n  LoadCheckpoint.remote(ckpt_path)",
-  },
-  TrainStep: {
-    durationStats: { count: 8500, min: 800, p50: 1500, p95: 2800, max: 6200 },
-    resources: { CPU: 4, GPU: 1, memory: 16000000000 },
-    retryStats: { retriedCount: 3, maxAttempt: 2 },
-    callSite: "train.py:65 in training_loop\n  TrainStep.remote(batch, model_state)",
-  },
-  ValidateEpoch: {
-    durationStats: { count: 17, min: 12000, p50: 15000, p95: 18000, max: 22000 },
-    resources: { CPU: 4, GPU: 1, memory: 16000000000 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "train.py:80 in training_loop\n  ValidateEpoch.remote(model_state, val_data)",
-  },
-  SaveCheckpoint: {
-    durationStats: { count: 17, min: 2000, p50: 2500, p95: 3500, max: 4000 },
-    resources: { CPU: 1, memory: 16000000000 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "train.py:90 in training_loop\n  SaveCheckpoint.remote(model_state, epoch)",
-  },
-  // --- Model Serving ---
-  HTTPIngress: {
-    durationStats: { count: 285000, min: 1, p50: 3, p95: 8, max: 25 },
-    resources: { CPU: 1 },
+    durationStats: { count: 8, min: 180, p50: 210, p95: 290, max: 310 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
     callSite: null,
   },
-  Preprocess: {
-    durationStats: { count: 284500, min: 2, p50: 5, p95: 15, max: 40 },
-    resources: { CPU: 1 },
+  train_step: {
+    durationStats: { count: 20, min: 280, p50: 340, p95: 520, max: 580 },
+    resources: { CPU: 1.0 },
+    retryStats: { retriedCount: 1, maxAttempt: 1 },
+    callSite: null,
+  },
+  validate: {
+    durationStats: { count: 2, min: 190, p50: 210, p95: 230, max: 230 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
     callSite: null,
   },
-  Tokenizer: {
-    durationStats: { count: 284000, min: 3, p50: 12, p95: 35, max: 80 },
-    resources: { CPU: 1, memory: 2000000000 },
+  save_checkpoint: {
+    durationStats: { count: 2, min: 100, p50: 120, p95: 140, max: 140 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
     callSite: null,
   },
-  EmbeddingModel: {
-    durationStats: { count: 280000, min: 8, p50: 25, p95: 60, max: 150 },
-    resources: { CPU: 1, GPU: 1, memory: 4000000000 },
-    retryStats: { retriedCount: 50, maxAttempt: 1 },
-    callSite: null,
-  },
-  RetrievalIndex: {
-    durationStats: { count: 280000, min: 5, p50: 15, p95: 45, max: 120 },
-    resources: { CPU: 2, memory: 8000000000 },
+  // --- Ray Core Eval (real func names, verified) ---
+  load_model: {
+    durationStats: { count: 1, min: 520, p50: 520, p95: 520, max: 520 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
     callSite: null,
   },
-  LLMGenerate: {
-    durationStats: { count: 260000, min: 200, p50: 850, p95: 2400, max: 8500 },
-    resources: { CPU: 1, GPU: 1, memory: 32000000000 },
-    retryStats: { retriedCount: 150, maxAttempt: 2 },
-    callSite: null,
-  },
-  Guardrails: {
-    durationStats: { count: 259000, min: 5, p50: 20, p95: 50, max: 120 },
-    resources: { CPU: 1 },
+  load_dataset: {
+    durationStats: { count: 2, min: 290, p50: 310, p95: 330, max: 330 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
     callSite: null,
   },
-  ResponseFormatter: {
-    durationStats: { count: 258000, min: 1, p50: 4, p95: 10, max: 30 },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: null,
-  },
-  // --- Eval pipeline ---
-  LoadModel: {
-    durationStats: { count: 1, min: 5200, p50: 5200, p95: 5200, max: 5200 },
-    resources: { CPU: 1, GPU: 1, memory: 16000000000 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "eval.py:15 in run_eval\n  LoadModel.remote(model_path)",
-  },
-  LoadTestDataset: {
-    durationStats: { count: 5000, min: 8, p50: 30, p95: 80, max: 200 },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "eval.py:22 in run_eval\n  LoadTestDataset.remote(dataset_path)",
-  },
-  RunInference: {
-    durationStats: { count: 4200, min: 50, p50: 180, p95: 500, max: 1200 },
-    resources: { CPU: 1, GPU: 1 },
+  run_inference: {
+    durationStats: { count: 4200, min: 40, p50: 55, p95: 90, max: 180 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 8, maxAttempt: 2 },
-    callSite: "eval.py:30 in run_eval\n  RunInference.remote(model, sample)",
+    callSite: null,
   },
-  LoadGoldenLabels: {
-    durationStats: { count: 5000, min: 3, p50: 10, p95: 25, max: 60 },
-    resources: { CPU: 1 },
+  compute_accuracy: {
+    durationStats: { count: 1, min: 210, p50: 210, p95: 210, max: 210 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "eval.py:25 in run_eval\n  LoadGoldenLabels.remote(label_path)",
+    callSite: null,
   },
-  ComputeAccuracy: {
-    durationStats: { count: 3800, min: 2, p50: 8, p95: 20, max: 50 },
-    resources: { CPU: 1 },
+  compute_latency: {
+    durationStats: { count: 1, min: 105, p50: 105, p95: 105, max: 105 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "eval.py:42 in run_eval\n  ComputeAccuracy.remote(pred, label)",
+    callSite: null,
   },
-  ComputeLatencyStats: {
-    durationStats: { count: 4200, min: 1, p50: 3, p95: 8, max: 20 },
-    resources: { CPU: 1 },
+  compute_f1: {
+    durationStats: { count: 1, min: 195, p50: 195, p95: 195, max: 195 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "eval.py:48 in run_eval\n  ComputeLatencyStats.remote(timing)",
+    callSite: null,
   },
-  ComputeF1Score: {
-    durationStats: { count: 3800, min: 3, p50: 10, p95: 25, max: 55 },
-    resources: { CPU: 1 },
-    retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "eval.py:54 in run_eval\n  ComputeF1Score.remote(pred, label)",
-  },
-  AggregateMetrics: {
+  aggregate_metrics: {
     durationStats: { count: 0, min: null, p50: null, p95: null, max: null },
-    resources: { CPU: 1 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "eval.py:62 in run_eval\n  AggregateMetrics.remote(*metrics)",
+    callSite: null,
   },
-  GenerateReport: {
+  generate_report: {
     durationStats: { count: 0, min: null, p50: null, p95: null, max: null },
-    resources: { CPU: 1 },
+    resources: { CPU: 1.0 },
     retryStats: { retriedCount: 0, maxAttempt: 0 },
-    callSite: "eval.py:70 in run_eval\n  GenerateReport.remote(aggregated)",
+    callSite: null,
   },
 };
 
