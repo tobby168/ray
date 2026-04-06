@@ -26,11 +26,7 @@ import ReactFlow, {
   useNodesState,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import useSWR from "swr";
 import { DAGSummary, NestedJobProgress } from "../../../type/job";
-import { Task } from "../../../type/task";
-import { StateApiResponse } from "../../../type/stateApi";
-import { get } from "../../../service/requestHandlers";
 import { formatStateCountsToProgress } from "../hook/useJobProgress";
 import { MiniTaskProgressBar } from "../TaskProgressBar";
 
@@ -190,15 +186,6 @@ const nodeTypes = { dagNode: DAGNodeComponent };
 
 // --- Detail Panel ---
 
-const fetchTasksByFuncName = (jobId: string, funcName: string) => {
-  const url =
-    `api/v0/tasks?detail=1&limit=10000` +
-    `&filter_keys=job_id,func_or_class_name` +
-    `&filter_predicates=%3D,%3D` +
-    `&filter_values=${jobId},${encodeURIComponent(funcName)}`;
-  return get<StateApiResponse<Task>>(url);
-};
-
 type DurationStats = {
   count: number;
   p50: number | null;
@@ -207,30 +194,46 @@ type DurationStats = {
   min: number | null;
 };
 
-const computeDurationStats = (tasks: Task[]): DurationStats => {
-  const durations = tasks
-    .filter((t) => t.start_time_ms !== null && t.end_time_ms !== null)
-    .map((t) => t.end_time_ms! - t.start_time_ms!)
-    .sort((a, b) => a - b);
-
-  if (durations.length === 0) {
-    return { count: 0, p50: null, p95: null, max: null, min: null };
-  }
-
-  return {
-    count: durations.length,
-    p50: durations[Math.floor(durations.length * 0.5)],
-    p95: durations[Math.floor(durations.length * 0.95)],
-    max: durations[durations.length - 1],
-    min: durations[0],
-  };
-};
-
 const formatDuration = (ms: number | null): string => {
   if (ms === null) return "-";
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
   return `${(ms / 60000).toFixed(1)}m`;
+};
+
+// --- Mock task data for testing ---
+// TODO: Remove mock data and use real API (fetchTasksByFuncName) once backend is deployed.
+const MOCK_TASK_DETAILS: Record<string, { durationStats: DurationStats; resources: Record<string, number>; retryStats: { retriedCount: number; maxAttempt: number }; callSite: string }> = {
+  read_parquet: {
+    durationStats: { count: 50000, min: 12, p50: 45, p95: 120, max: 380 },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "pipeline.py:42 in build_pipeline\n  read_parquet.remote(path)",
+  },
+  preprocess: {
+    durationStats: { count: 36000, min: 80, p50: 120, p95: 340, max: 890 },
+    resources: { CPU: 2, memory: 4000000000 },
+    retryStats: { retriedCount: 23, maxAttempt: 2 },
+    callSite: "pipeline.py:55 in build_pipeline\n  preprocess.remote(block)",
+  },
+  train_batch: {
+    durationStats: { count: 1500, min: 1200, p50: 2100, p95: 3200, max: 8700 },
+    resources: { CPU: 1, GPU: 1 },
+    retryStats: { retriedCount: 12, maxAttempt: 3 },
+    callSite: "pipeline.py:68 in build_pipeline\n  train_batch.remote(data, weights)",
+  },
+  load_weights: {
+    durationStats: { count: 1, min: 3200, p50: 3200, p95: 3200, max: 3200 },
+    resources: { CPU: 1, memory: 8000000000 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "pipeline.py:35 in build_pipeline\n  load_weights.remote(model_path)",
+  },
+  save_model: {
+    durationStats: { count: 0, min: null, p50: null, p95: null, max: null },
+    resources: { CPU: 1 },
+    retryStats: { retriedCount: 0, maxAttempt: 0 },
+    callSite: "pipeline.py:82 in build_pipeline\n  save_model.remote(checkpoint)",
+  },
 };
 
 type DAGNodeDetailPanelProps = {
@@ -241,72 +244,34 @@ type DAGNodeDetailPanelProps = {
 
 const DAGNodeDetailPanel = ({
   summary,
-  dagSummary,
-  jobId,
 }: DAGNodeDetailPanelProps) => {
   const theme = useTheme();
 
-  // Fetch task details for this function
-  const { data: taskData } = useSWR(
-    ["dagNodeDetail", jobId, summary.name],
-    async (): Promise<Task[]> => {
-      const rsp = await fetchTasksByFuncName(jobId, summary.name);
-      if (rsp.data.result) {
-        return rsp.data.data.result as unknown as Task[];
-      }
-      return [] as Task[];
-    },
-    { revalidateOnFocus: false },
-  );
+  // TODO: Replace with real API call:
+  // const { data: taskData } = useSWR(
+  //   ["dagNodeDetail", jobId, summary.name],
+  //   async (): Promise<Task[]> => {
+  //     const rsp = await fetchTasksByFuncName(jobId, summary.name);
+  //     if (rsp.data.result) return rsp.data.data.result as unknown as Task[];
+  //     return [];
+  //   },
+  //   { revalidateOnFocus: false },
+  // );
+  // const tasks: Task[] = taskData ?? [];
+  // const durationStats = useMemo(() => computeDurationStats(tasks), [tasks]);
+  // const resources = useMemo(() => { ... from tasks ... }, [tasks]);
+  // const retryStats = useMemo(() => { ... from tasks ... }, [tasks]);
+  // const callSite = useMemo(() => tasks.find(t => t.call_site)?.call_site ?? null, [tasks]);
 
-  const tasks: Task[] = taskData ?? [];
+  const mock = MOCK_TASK_DETAILS[summary.name] ?? MOCK_TASK_DETAILS["read_parquet"];
+  const durationStats = mock.durationStats;
+  const resources = mock.resources;
+  const retryStats = mock.retryStats;
+  const callSite = mock.callSite;
 
   // State distribution
   const stateCounts = summary.state_counts;
   const total = Object.values(stateCounts).reduce((a, b) => a + b, 0);
-
-  // Duration stats
-  const durationStats = useMemo(() => computeDurationStats(tasks), [tasks]);
-
-  // Resource requirements (from first task that has them)
-  const resources = useMemo(() => {
-    const t = tasks.find(
-      (t) => t.required_resources && Object.keys(t.required_resources).length > 0,
-    );
-    return t?.required_resources ?? {};
-  }, [tasks]);
-
-  // Retry stats
-  const retryStats = useMemo(() => {
-    const retried = tasks.filter((t) => t.attempt_number > 0);
-    const maxRetry = tasks.reduce(
-      (max, t) => Math.max(max, t.attempt_number),
-      0,
-    );
-    return { retriedCount: retried.length, maxAttempt: maxRetry };
-  }, [tasks]);
-
-  // Call site (from first task that has it)
-  const callSite = useMemo(() => {
-    return tasks.find((t) => t.call_site)?.call_site ?? null;
-  }, [tasks]);
-
-  // Upstream / downstream from edges
-  const upstream = dagSummary.edges
-    .filter((e) => e.target === summary.key)
-    .map((e) => {
-      const node = dagSummary.nodes.find((n) => n.key === e.source);
-      return node;
-    })
-    .filter(Boolean) as NestedJobProgress[];
-
-  const downstream = dagSummary.edges
-    .filter((e) => e.source === summary.key)
-    .map((e) => {
-      const node = dagSummary.nodes.find((n) => n.key === e.target);
-      return node;
-    })
-    .filter(Boolean) as NestedJobProgress[];
 
   const bottleneck = detectBottleneck(stateCounts);
   const borderColorMap: Record<BottleneckType, string> = {
@@ -317,12 +282,17 @@ const DAGNodeDetailPanel = ({
     done: theme.palette.success.main,
   };
 
-  const nodeProgressSummary = (node: NestedJobProgress) => {
-    const t = Object.values(node.state_counts).reduce((a, b) => a + b, 0);
-    const f = node.state_counts["FINISHED"] ?? 0;
-    const fail = node.state_counts["FAILED"] ?? 0;
-    const p = t > 0 ? Math.round((f / t) * 100) : 0;
-    return `${f.toLocaleString()}/${t.toLocaleString()} (${p}%)${fail > 0 ? ` ${fail} failed` : ""}`;
+  const formatBytes = (bytes: number): string => {
+    if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+    if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`;
+    return `${bytes}`;
+  };
+
+  const formatResourceValue = (key: string, val: number): string => {
+    if (key.toLowerCase() === "memory" || key.toLowerCase() === "object_store_memory") {
+      return formatBytes(val);
+    }
+    return String(val);
   };
 
   return (
@@ -342,11 +312,7 @@ const DAGNodeDetailPanel = ({
       <Box sx={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
         {/* State Distribution */}
         <Box sx={{ minWidth: 200 }}>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            fontWeight={600}
-          >
+          <Typography variant="caption" color="text.secondary" fontWeight={600}>
             State Distribution
           </Typography>
           <Table size="small" sx={{ mt: 0.5 }}>
@@ -375,13 +341,9 @@ const DAGNodeDetailPanel = ({
         </Box>
 
         {/* Duration Distribution */}
-        <Box sx={{ minWidth: 160 }}>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            fontWeight={600}
-          >
-            Duration ({durationStats.count} completed)
+        <Box sx={{ minWidth: 140 }}>
+          <Typography variant="caption" color="text.secondary" fontWeight={600}>
+            Duration ({durationStats.count.toLocaleString()} completed)
           </Typography>
           <Table size="small" sx={{ mt: 0.5 }}>
             <TableBody>
@@ -408,126 +370,73 @@ const DAGNodeDetailPanel = ({
           </Table>
         </Box>
 
-        {/* Resources & Retries */}
-        <Box sx={{ minWidth: 160 }}>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            fontWeight={600}
-          >
-            Resources
+        {/* Resources */}
+        <Box sx={{ minWidth: 140 }}>
+          <Typography variant="caption" color="text.secondary" fontWeight={600}>
+            Resources (per task)
           </Typography>
           <Table size="small" sx={{ mt: 0.5 }}>
             <TableBody>
-              {Object.keys(resources).length > 0 ? (
-                Object.entries(resources).map(([key, val]) => (
-                  <TableRow key={key} sx={{ "&:last-child td": { border: 0 } }}>
-                    <TableCell sx={{ py: 0.25, pl: 0 }}>
-                      <Typography variant="caption">{key}</Typography>
-                    </TableCell>
-                    <TableCell align="right" sx={{ py: 0.25, pr: 0 }}>
-                      <Typography variant="caption" fontWeight={600}>
-                        {val}
-                      </Typography>
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow sx={{ "&:last-child td": { border: 0 } }}>
+              {Object.entries(resources).map(([key, val]) => (
+                <TableRow key={key} sx={{ "&:last-child td": { border: 0 } }}>
                   <TableCell sx={{ py: 0.25, pl: 0 }}>
-                    <Typography variant="caption" color="text.secondary">
-                      {tasks.length > 0 ? "No resources specified" : "Loading..."}
+                    <Typography variant="caption">{key}</Typography>
+                  </TableCell>
+                  <TableCell align="right" sx={{ py: 0.25, pr: 0 }}>
+                    <Typography variant="caption" fontWeight={600}>
+                      {formatResourceValue(key, val)}
                     </Typography>
                   </TableCell>
                 </TableRow>
-              )}
+              ))}
             </TableBody>
           </Table>
-
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            fontWeight={600}
-            sx={{ mt: 1, display: "block" }}
-          >
-            Retries
-          </Typography>
-          <Typography variant="caption">
-            {retryStats.retriedCount > 0
-              ? `${retryStats.retriedCount} tasks retried (max attempt: ${retryStats.maxAttempt})`
-              : tasks.length > 0
-                ? "No retries"
-                : "Loading..."}
-          </Typography>
         </Box>
 
-        {/* Upstream / Downstream */}
-        <Box sx={{ minWidth: 180 }}>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            fontWeight={600}
-          >
-            Upstream
+        {/* Retries */}
+        <Box sx={{ minWidth: 120 }}>
+          <Typography variant="caption" color="text.secondary" fontWeight={600}>
+            Retries
           </Typography>
-          {upstream.length > 0 ? (
-            upstream.map((u) => (
-              <Typography key={u.key} variant="caption" display="block">
-                ← {u.name} {nodeProgressSummary(u)}
+          <Box sx={{ mt: 0.5 }}>
+            {retryStats.retriedCount > 0 ? (
+              <React.Fragment>
+                <Typography variant="caption" display="block">
+                  {retryStats.retriedCount} tasks retried
+                </Typography>
+                <Typography variant="caption" display="block" color="text.secondary">
+                  max attempt: {retryStats.maxAttempt}
+                </Typography>
+              </React.Fragment>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                No retries
               </Typography>
-            ))
-          ) : (
-            <Typography variant="caption" color="text.secondary" display="block">
-              None (source)
-            </Typography>
-          )}
-
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            fontWeight={600}
-            sx={{ mt: 1, display: "block" }}
-          >
-            Downstream
-          </Typography>
-          {downstream.length > 0 ? (
-            downstream.map((d) => (
-              <Typography key={d.key} variant="caption" display="block">
-                → {d.name} {nodeProgressSummary(d)}
-              </Typography>
-            ))
-          ) : (
-            <Typography variant="caption" color="text.secondary" display="block">
-              None (sink)
-            </Typography>
-          )}
+            )}
+          </Box>
         </Box>
       </Box>
 
       {/* Call Site */}
-      {callSite && (
-        <React.Fragment>
-          <Divider sx={{ my: 1.5 }} />
-          <Typography variant="caption" color="text.secondary" fontWeight={600}>
-            Call Site
-          </Typography>
-          <Typography
-            variant="caption"
-            display="block"
-            sx={{
-              fontFamily: "monospace",
-              bgcolor: theme.palette.grey[100],
-              p: 0.5,
-              borderRadius: 0.5,
-              mt: 0.5,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
-            }}
-          >
-            {callSite}
-          </Typography>
-        </React.Fragment>
-      )}
+      <Divider sx={{ my: 1.5 }} />
+      <Typography variant="caption" color="text.secondary" fontWeight={600}>
+        Call Site
+      </Typography>
+      <Typography
+        variant="caption"
+        display="block"
+        sx={{
+          fontFamily: "monospace",
+          bgcolor: theme.palette.grey[100],
+          p: 0.5,
+          borderRadius: 0.5,
+          mt: 0.5,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-all",
+        }}
+      >
+        {callSite}
+      </Typography>
     </Paper>
   );
 };
