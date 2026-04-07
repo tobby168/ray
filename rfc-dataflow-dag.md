@@ -215,6 +215,61 @@ Key finding: Ray Data uses `func_or_class_name = "_map_task"` for ALL operators,
 - **Frontend**: dagre layout is <50ms for 10 nodes. ReactFlow handles zoom/pan efficiently.
 - **API**: The `summary_by=dataflow` endpoint aggregates at the group level, returning ~5-20 nodes regardless of total task count.
 
+## Known Limitations
+
+### `ray.get()` breaks the ObjectRef chain
+
+The most significant limitation. Many users write Ray code with `ray.get()` between every step:
+
+```python
+# Common pattern — breaks DAG edges
+data = ray.get(load_data.remote())           # ObjectRef resolved here
+processed = ray.get(preprocess.remote(data))  # 'data' is a value, not ObjectRef
+result = ray.get(train.remote(processed))     # same — no dependency_object_ids
+
+# DAG result: 3 disconnected nodes, no edges ❌
+```
+
+Only when ObjectRefs are passed directly do edges appear:
+
+```python
+# Correct pattern — preserves DAG edges
+data_ref = load_data.remote()
+processed_ref = preprocess.remote(data_ref)    # ObjectRef passed directly
+result = ray.get(train.remote(processed_ref))
+
+# DAG result: load_data → preprocess → train ✅
+```
+
+**Impact**: Ray Core users who `ray.get()` at every step will see nodes with no edges. However:
+- **Ray Data is not affected** — operators pass ObjectRefs internally through the streaming executor, never resolving in the driver.
+- **Best practice alignment** — unnecessary `ray.get()` blocks the driver and hurts performance. The DAG view provides a visual incentive to follow the recommended pattern.
+- **Graceful degradation** — nodes without edges still show useful per-group progress (state counts, completion %). It's equivalent to the existing `summary_by=func_name` view but with individual node cards.
+
+### Lambda name collisions
+
+```python
+ds = ds.map(lambda x: x * 2)   # name = "Map(<lambda>)"
+ds = ds.map(lambda x: x + 1)   # name = "Map(<lambda>)" — same name, merged into one node
+```
+
+When Ray Data users pass lambdas, multiple distinct operators can share the same `name`. They get merged into a single DAG node. **Mitigation**: users can pass named functions or use `fn_constructor_kwargs` to get distinct names. This is also a known limitation of Ray Data's own progress bar.
+
+### `ray.put()` objects have no producer task
+
+```python
+config = ray.put({"lr": 0.01})           # put by driver, not a task
+results = [train.remote(config) for _ in range(10)]
+# train's dependency_object_ids includes config's ObjectID
+# but no producer task exists → edge is silently dropped
+```
+
+This is acceptable — `ray.put()` objects are typically config/metadata, not pipeline stages.
+
+### Ray Data operator fusion
+
+Ray Data may fuse multiple operators into a single task with a combined name like `ReadRange->Map(<lambda>)->Filter(<lambda>)`. The DAG structure depends on fusion decisions, which can vary based on resource configuration. This is an inherent property of Ray Data's execution model, not something the DAG view can control.
+
 ## Prototype
 
 A working prototype is available at:
