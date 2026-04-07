@@ -63,35 +63,13 @@ Add a **Dataflow DAG** view to the Job Detail page that visualizes task groups a
 
 ![Ray Data ETL DAG - ReadParquet through Map, Filter, fan-out, join, deduplicate, write](rfc-images/2-dag-data-pipeline.png)
 
-```
-ReadParquet ──→ Map(parse_json) ──→ Filter(validate) ──→ Map(fetch_user_profile) ──┐
-   100%             100%                96%                     67%                 │
-                                                                                    ├──→ _split_single_block ──→ MapBatches(deduplicate) ──→ Map(write_parquet)
-                                                            Map(fetch_geo_data) ───┘         50%                        33%                       21%
-                                                                  79%
-```
-
 ### Example: Ray Core Training Pipeline
 
 ![Training DAG - load_data, preprocess, train_step, validate, save_checkpoint](rfc-images/3-dag-training.png)
 
-```
-load_data ──→ preprocess ──→ train_step ──→ validate ──→ save_checkpoint
-  100%          100%          71% (1 fail)    67%            67%
-```
-
 ### Example: Evaluation Pipeline
 
 ![Eval DAG - load_model, load_dataset, run_inference, fan-out metrics, aggregate, report](rfc-images/4-dag-eval.png)
-
-```
-load_model ────┐
-               ├──→ run_inference ──→ compute_accuracy ──┐
-load_dataset ──┤         84%         ├─→ compute_latency ├──→ aggregate_metrics ──→ generate_report
-               │                     └─→ compute_f1 ────┘         0% (blocked)       0% (blocked)
-               └──→ compute_accuracy
-               └──→ compute_f1
-```
 
 ### Bottleneck detection
 
