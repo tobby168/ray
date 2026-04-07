@@ -270,9 +270,24 @@ This is acceptable — `ray.put()` objects are typically config/metadata, not pi
 
 Ray Data may fuse multiple operators into a single task with a combined name like `ReadRange->Map(<lambda>)->Filter(<lambda>)`. The DAG structure depends on fusion decisions, which can vary based on resource configuration. This is an inherent property of Ray Data's execution model, not something the DAG view can control.
 
-## Prototype
+## Working Prototype
 
-A working prototype is available at:
-- Branch: `claude/goofy-aryabhata` in the ray repo
-- Includes: proto changes, C++ changes, Python aggregation, ReactFlow frontend, mock data demos
-- Python unit tests pass for pipeline, fan-out/fan-in, and no-dependency patterns
+A fully functional prototype is available for review and testing:
+
+**Branch**: [`claude/goofy-aryabhata`](https://github.com/tobby168/ray/tree/claude/goofy-aryabhata)
+
+**What's included**:
+- Protobuf + C++ changes (`TaskInfoEntry` + `FillTaskInfo()`)
+- Python aggregation logic (`to_summary_by_dataflow()` with topological sort)
+- ReactFlow + dagre frontend component with bottleneck detection and detail panel
+- Mock data for 3 workload scenarios (Ray Data ETL, training, eval)
+- Python unit tests (pipeline, fan-out/fan-in, no-dependency patterns)
+
+**How to test** (frontend with mock data, no backend build required):
+```bash
+cd python/ray/dashboard/client
+npm install
+PORT=3001 npm start
+# Open http://localhost:3001/#/jobs/<any-real-job-id>
+# Add ?dag=data-pipeline or ?dag=training or ?dag=eval to switch scenarios
+```
