@@ -26,7 +26,7 @@ driver
 
 Users cannot see the actual dataflow relationships (read -> preprocess -> train) or quickly identify which stage is the bottleneck.
 
-<!-- TODO: attach screenshot current-ray-core-overview.png showing the flat lineage tree -->
+![Current Ray Core Overview - flat lineage tree with no edges between stages](rfc-images/1-current-ray-core-overview.png)
 
 ### Specific pain points
 
@@ -61,7 +61,7 @@ Add a **Dataflow DAG** view to the Job Detail page that visualizes task groups a
 
 ### Example: Ray Data ETL Pipeline
 
-<!-- TODO: attach screenshot dag-data-pipeline.png -->
+![Ray Data ETL DAG - ReadParquet through Map, Filter, fan-out, join, deduplicate, write](rfc-images/2-dag-data-pipeline.png)
 
 ```
 ReadParquet ──→ Map(parse_json) ──→ Filter(validate) ──→ Map(fetch_user_profile) ──┐
@@ -73,7 +73,7 @@ ReadParquet ──→ Map(parse_json) ──→ Filter(validate) ──→ Map(f
 
 ### Example: Ray Core Training Pipeline
 
-<!-- TODO: attach screenshot dag-training.png -->
+![Training DAG - load_data, preprocess, train_step, validate, save_checkpoint](rfc-images/3-dag-training.png)
 
 ```
 load_data ──→ preprocess ──→ train_step ──→ validate ──→ save_checkpoint
@@ -82,7 +82,7 @@ load_data ──→ preprocess ──→ train_step ──→ validate ──→
 
 ### Example: Evaluation Pipeline
 
-<!-- TODO: attach screenshot dag-eval.png -->
+![Eval DAG - load_model, load_dataset, run_inference, fan-out metrics, aggregate, report](rfc-images/4-dag-eval.png)
 
 ```
 load_model ────┐
@@ -106,6 +106,8 @@ Each node is color-coded based on its state relative to upstream nodes:
 | Gray | Default | Healthy / in progress |
 
 ### Click-to-expand detail panel
+
+![Node detail panel - run_inference expanded with state distribution, duration, resources, retries](rfc-images/5-dag-node-detail.png)
 
 Clicking a node shows:
 - **State Distribution** -- Count and percentage for each task state
