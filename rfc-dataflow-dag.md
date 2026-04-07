@@ -186,7 +186,23 @@ The aggregation logic:
 
 ### Frontend (new component)
 
-- Add ReactFlow + dagre as dependencies (~150KB bundle)
+**Library choice: ReactFlow + dagre**
+
+The Ray Dashboard currently has zero visualization dependencies — all UI is MUI Table + CSS flexbox. We evaluated several options for DAG rendering:
+
+| Option | Bundle Size | Pros | Cons |
+|--------|------------|------|------|
+| **ReactFlow + dagre** | ~150KB gzipped | React-first, custom nodes via JSX, built-in zoom/pan/minimap, large community | First viz dependency added to dashboard |
+| Pure SVG + dagre | ~30KB | Lightweight, full control | Must hand-build zoom/pan, edge routing, touch support, drag, minimap |
+| D3 | ~80KB | Powerful, flexible | Fights React for DOM control, steep learning curve |
+| Visx (Airbnb) | ~20KB per module | Lightweight React D3 wrappers | Too low-level, essentially building from scratch |
+| Cytoscape.js | ~200KB | Full-featured graph lib | Designed for network graphs, not DAGs; no React integration |
+
+**Why ReactFlow**: Complex DAGs (Ray Data pipelines can have 10+ operators with fan-out/fan-in) need zoom/pan, edge routing that avoids crossing nodes, and a minimap for navigation. Building these from scratch with pure SVG is significant effort and error-prone (touch support, resize reflow, accessibility). ReactFlow provides all of this out of the box, and its custom node API lets us embed MUI components (`Paper`, `MiniTaskProgressBar`) directly — so DAG nodes look consistent with the rest of the dashboard.
+
+**dagre** handles the layout algorithm (topological sort + layered positioning), ReactFlow handles rendering and interaction.
+
+**Implementation:**
 - New `DAGProgressBar` component using ReactFlow for rendering and dagre for layout
 - Each node is a custom ReactFlow node containing the existing `MiniTaskProgressBar`
 - Collapsible section on Job Detail page (same pattern as Task Table, Actor Table)
